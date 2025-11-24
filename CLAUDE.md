@@ -78,8 +78,31 @@ python src/train_latent_t5.py \
 - `--freeze_t5_initially`: Start with frozen T5 (train only latent modules first)
 - `--no_gradient_checkpointing`: Disable gradient checkpointing (uses more memory)
 - `--no_mixed_precision`: Disable AMP (automatic mixed precision)
+- `--resume_from`: Path to checkpoint file to resume training from (e.g., `saved_checkpoints/outputs_latent_first_run/best_latent_t5.pt`)
 
 The latent LR defaults to `1e-4` (changed from `2e-4` in recent code update).
+
+**Resuming from checkpoint**:
+
+To continue training from a previously saved checkpoint:
+
+```bash
+python src/train_latent_t5.py \
+  --output_dir outputs_latent_resume \
+  --batch_size 4 \
+  --num_epochs 2 \
+  --lr_latent 3e-5 \
+  --lr_t5 1e-5 \
+  --lr_encoder 1e-5 \
+  --resume_from saved_checkpoints/outputs_latent_first_run/best_latent_t5.pt \
+  --max_context_tokens 512
+```
+
+When resuming:
+- Model architecture and config are loaded from the checkpoint
+- Model weights are initialized from the checkpoint
+- Training starts fresh with new optimizer state and scheduler
+- You can adjust hyperparameters like learning rates, batch size, and max tokens
 
 ### Train Baseline T5 Model
 

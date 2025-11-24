@@ -303,6 +303,9 @@ def parse_args():
     parser.add_argument("--no_gradient_checkpointing", action="store_true")
     parser.add_argument("--no_mixed_precision", action="store_true")
 
+    parser.add_argument("--resume_from", type=str, default=None,
+                        help="Path to checkpoint file to resume training from.")
+
     return parser.parse_args()
 
 
@@ -358,20 +361,42 @@ def main():
 
     # ---- Model config & init ----
     print("Initializing model...")
-    config = LatentT5Config(
-        t5_model_name="google/flan-t5-base",
-        encoder_model_name="distilbert-base-uncased",
-        num_latents=32,
-        num_latent_layers=2,
-        num_latent_heads=8,
-        latent_dropout=0.1,
-        aux_loss_weight=0.1,  # reduced from 1.0 to prevent early training instability
-        freeze_t5_initially=args.freeze_t5_initially,
-        use_gradient_checkpointing=not args.no_gradient_checkpointing,
-        use_mixed_precision=not args.no_mixed_precision,
-    )
+
+    # If resuming from checkpoint, load config from checkpoint
+    if args.resume_from:
+        print(f"Loading checkpoint from {args.resume_from}...")
+        checkpoint = torch.load(args.resume_from, map_location=device)
+
+        # Load config from checkpoint
+        saved_config = checkpoint["config"]
+        config = LatentT5Config(**saved_config)
+
+        # Override mixed precision and gradient checkpointing from CLI args if provided
+        config.use_gradient_checkpointing = not args.no_gradient_checkpointing
+        config.use_mixed_precision = not args.no_mixed_precision
+
+        print(f"Loaded config from checkpoint: {config}")
+    else:
+        config = LatentT5Config(
+            t5_model_name="google/flan-t5-base",
+            encoder_model_name="distilbert-base-uncased",
+            num_latents=32,
+            num_latent_layers=2,
+            num_latent_heads=8,
+            latent_dropout=0.1,
+            aux_loss_weight=0.1,  # reduced from 1.0 to prevent early training instability
+            freeze_t5_initially=args.freeze_t5_initially,
+            use_gradient_checkpointing=not args.no_gradient_checkpointing,
+            use_mixed_precision=not args.no_mixed_precision,
+        )
 
     model = LatentT5Model(config)
+
+    # Load model weights if resuming
+    if args.resume_from:
+        model.load_state_dict(checkpoint["model_state_dict"])
+        print("Loaded model weights from checkpoint.")
+
     model.to(device)
 
     # ---- Optimizer & scheduler ----
