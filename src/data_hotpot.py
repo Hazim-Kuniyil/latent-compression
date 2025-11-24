@@ -29,6 +29,58 @@ from transformers import PreTrainedTokenizerBase
 
 
 # =========================
+#   Helper: Normalize HotpotQA fields
+# =========================
+
+def _normalize_hotpot_fields(
+    supporting_facts, context
+):
+    """
+    Normalize raw HotpotQA fields (HF format or preprocessed) into:
+      supporting_facts: {'title': [...], 'sent_id': [...]}
+      context: {'title': [...], 'sentences': [[...], ...]}
+    """
+    # --- supporting_facts ---
+    if isinstance(supporting_facts, dict):
+        # Assume already in {'title': [...], 'sent_id': [...]} format
+        sf_dict = supporting_facts
+    elif isinstance(supporting_facts, list):
+        # HF format: list of [title, sent_id]
+        titles = []
+        sent_ids = []
+        for pair in supporting_facts:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                continue
+            t, sid = pair
+            titles.append(t)
+            sent_ids.append(int(sid))
+        sf_dict = {"title": titles, "sent_id": sent_ids}
+    else:
+        # Fallback: empty
+        sf_dict = {"title": [], "sent_id": []}
+
+    # --- context ---
+    if isinstance(context, dict):
+        # Assume already {'title': [...], 'sentences': [[...], ...]}
+        ctx_dict = context
+    elif isinstance(context, list):
+        # HF format: list of [title, [sentences]]
+        titles = []
+        sentences_list = []
+        for pair in context:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                continue
+            t, sents = pair
+            titles.append(t)
+            sentences_list.append(list(sents))
+        ctx_dict = {"title": titles, "sentences": sentences_list}
+    else:
+        ctx_dict = {"title": [], "sentences": []}
+
+    return sf_dict, ctx_dict
+
+
+# =========================
 #   Dataset wrapper
 # =========================
 
@@ -63,6 +115,11 @@ class HotpotDataset(Dataset):
         if isinstance(context, str):
             context = ast.literal_eval(context)
 
+        # Normalize HF/raw formats into canonical dicts
+        supporting_facts, context = _normalize_hotpot_fields(
+            supporting_facts, context
+        )
+
         return {
             "id": sample_id,
             "question": question,
@@ -79,7 +136,9 @@ class HotpotDataset(Dataset):
 def _build_support_set(supporting_facts: Dict[str, Any]) -> set:
     """
     Build a set of (title, sent_id) pairs that are supporting sentences.
-    supporting_facts: {'title': [...], 'sent_id': [...]}
+
+    Expected normalized format:
+        supporting_facts: {'title': [...], 'sent_id': [...]}
     """
     titles = supporting_facts.get("title", [])
     sent_ids = supporting_facts.get("sent_id", [])

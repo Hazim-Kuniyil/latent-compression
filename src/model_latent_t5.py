@@ -26,6 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from transformers import AutoModel, AutoModelForSeq2SeqLM
+from transformers.modeling_outputs import BaseModelOutput
 
 
 # -----------------------------
@@ -355,8 +356,10 @@ class LatentT5Model(nn.Module):
         )
 
         # Run T5 decoder with custom encoder outputs
+        encoder_outputs = BaseModelOutput(last_hidden_state=encoder_hidden)
+
         outputs = self.t5(
-            encoder_outputs=(encoder_hidden,),
+            encoder_outputs=encoder_outputs,
             attention_mask=encoder_attention_mask,
             labels=labels,
             return_dict=True,
@@ -375,8 +378,9 @@ class LatentT5Model(nn.Module):
 
             # Mass of attention on support tokens
             pos_mass = (attn_over_tokens * support_mask).sum(dim=-1)  # [B]
-            # Avoid log(0)
-            pos_mass = torch.clamp(pos_mass, min=1e-8)
+            # Avoid log(0) and cap maximum loss to prevent instability at initialization
+            # When pos_mass is very small (random attention), clamp to reasonable range
+            pos_mass = torch.clamp(pos_mass, min=0.01, max=1.0)  # changed from 1e-8
             aux_loss = -torch.log(pos_mass).mean()
 
         # 8) Combine losses
@@ -418,8 +422,10 @@ class LatentT5Model(nn.Module):
             context_attention_mask=context_attention_mask,
         )
 
+        encoder_outputs = BaseModelOutput(last_hidden_state=encoder_hidden)
+
         generated_ids = self.t5.generate(
-            encoder_outputs=(encoder_hidden,),
+            encoder_outputs=encoder_outputs,
             attention_mask=encoder_attention_mask,
             **gen_kwargs,
         )

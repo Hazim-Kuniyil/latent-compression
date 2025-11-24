@@ -16,15 +16,17 @@ import argparse
 import json
 import math
 import os
+import random
 import re
 import string
 from typing import Optional, Tuple
 
+import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
-from torch.optim import AdamW  
+from torch.amp import GradScaler, autocast
+from torch.optim import AdamW
 from transformers import (
     T5TokenizerFast,
     get_linear_schedule_with_warmup,
@@ -33,6 +35,19 @@ from datasets import load_dataset
 
 from model_baseline_t5 import BaselineT5Model
 from data_hotpot import HotpotDataset, collate_baseline
+
+
+# =========================
+#   Reproducibility
+# =========================
+
+def set_seed(seed: int = 42):
+    """Set random seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 # =========================
@@ -140,7 +155,7 @@ def train_one_epoch(
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
                  for k, v in batch.items()}
 
-        with autocast(enabled=use_mixed_precision):
+        with autocast("cuda", enabled=use_mixed_precision):
             outputs = model(
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"],
@@ -283,6 +298,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
+    # Set random seed for reproducibility
+    set_seed(42)
+
     # ---- Load data from Hugging Face ----
     print("Loading HotpotQA from Hugging Face datasets...")
     hf_ds = load_dataset("hotpot_qa", "distractor")
@@ -381,6 +399,20 @@ def main():
                 },
                 best_ckpt_path,
             )
+
+            # Save metrics alongside checkpoint
+            metrics_path = os.path.join(args.output_dir, "best_metrics.json")
+            with open(metrics_path, "w") as f:
+                json.dump(
+                    {
+                        "eval_loss": float(eval_loss),
+                        "em": float(em) if em is not None else None,
+                        "f1": float(f1) if f1 is not None else None,
+                    },
+                    f,
+                    indent=2,
+                )
+            print(f"Saved metrics to {metrics_path}")
 
 
 if __name__ == "__main__":

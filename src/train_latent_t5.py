@@ -13,13 +13,15 @@ Adjust the pandas loading logic if your files are in a different format.
 """
 
 import argparse
+import json
 import math
 import os
+import random
 import re
 import string
 from typing import Optional, Tuple
 
-import pandas as pd
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torch.amp import autocast, GradScaler
@@ -33,6 +35,19 @@ from datasets import load_dataset
 
 from model_latent_t5 import LatentT5Model, LatentT5Config
 from data_hotpot import HotpotDataset, collate_latent
+
+
+# =========================
+#   Reproducibility
+# =========================
+
+def set_seed(seed: int = 42):
+    """Set random seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 # =========================
@@ -298,6 +313,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
+    # Set random seed for reproducibility
+    set_seed(42)
+
     # ---- Load data from Hugging Face ----
     print("Loading HotpotQA from Hugging Face datasets...")
     hf_ds = load_dataset("hotpot_qa", "distractor")
@@ -347,7 +365,7 @@ def main():
         num_latent_layers=2,
         num_latent_heads=8,
         latent_dropout=0.1,
-        aux_loss_weight=1.0,
+        aux_loss_weight=0.1,  # reduced from 1.0 to prevent early training instability
         freeze_t5_initially=args.freeze_t5_initially,
         use_gradient_checkpointing=not args.no_gradient_checkpointing,
         use_mixed_precision=not args.no_mixed_precision,
@@ -418,6 +436,20 @@ def main():
                 },
                 best_ckpt_path,
             )
+
+            # Save metrics alongside checkpoint
+            metrics_path = os.path.join(args.output_dir, "best_metrics.json")
+            with open(metrics_path, "w") as f:
+                json.dump(
+                    {
+                        "eval_loss": float(eval_loss),
+                        "em": float(em) if em is not None else None,
+                        "f1": float(f1) if f1 is not None else None,
+                    },
+                    f,
+                    indent=2,
+                )
+            print(f"Saved metrics to {metrics_path}")
 
 
 if __name__ == "__main__":
