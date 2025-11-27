@@ -60,14 +60,17 @@ Both training scripts now **automatically download HotpotQA from Hugging Face** 
 
 ### Train Latent T5 Model
 
+**Recommended settings** (rebalanced for generation over highlighting):
+
 ```bash
 python src/train_latent_t5.py \
   --output_dir outputs_latent \
   --batch_size 8 \
-  --num_epochs 3 \
+  --num_epochs 10 \
   --lr_latent 1e-4 \
   --lr_t5 1e-5 \
   --lr_encoder 1e-5 \
+  --aux_loss_weight 0.2 \
   --max_context_tokens 768 \
   --max_question_tokens 64 \
   --max_answer_tokens 32
@@ -75,12 +78,23 @@ python src/train_latent_t5.py \
 
 **Key arguments**:
 - `--lr_latent`, `--lr_t5`, `--lr_encoder`: Separate learning rates for different components
+- `--aux_loss_weight`: Weight for auxiliary support-fact highlighting loss (default: 1.0, **recommended: 0.2**)
+  - Lower values (0.2) make highlighting a gentle guide rather than primary objective
+  - This helps the model prioritize learning to answer (generation) over learning to point (attention)
+- `--num_epochs`: Number of training epochs (default: 3, **recommended: 10**)
+  - T5 needs more time to learn the "language" of your latent vectors
+  - The alignment between latent embeddings and T5 embeddings doesn't happen in early epochs
 - `--freeze_t5_initially`: Start with frozen T5 (train only latent modules first)
 - `--no_gradient_checkpointing`: Disable gradient checkpointing (uses more memory)
 - `--no_mixed_precision`: Disable AMP (automatic mixed precision)
 - `--resume_from`: Path to checkpoint file to resume training from (e.g., `saved_checkpoints/outputs_latent_first_run/best_latent_t5.pt`)
 
 The latent LR defaults to `1e-4` (changed from `2e-4` in recent code update).
+
+**Loss monitoring**: The training script now logs three loss components separately:
+- **Total**: Combined loss (answer loss + aux_loss_weight * aux loss)
+- **Ans**: Answer generation loss (how well the model generates correct answers)
+- **Aux**: Auxiliary highlighting loss (how well latents attend to supporting facts)
 
 **Resuming from checkpoint**:
 
@@ -137,7 +151,10 @@ The `LatentT5Config` dataclass ([src/model_latent_t5.py:192-208](src/model_laten
 - `num_latent_layers`: Cross-attention layers (default: 2)
 - `num_latent_heads`: Attention heads (default: 8)
 - `latent_dropout`: Dropout rate (default: 0.1)
-- `aux_loss_weight`: Weight for support-attention loss (default: 0.1 in config, but **1.0 in training script**)
+- `aux_loss_weight`: Weight for support-attention loss (default: 0.1 in config, **1.0 in training script default, 0.2 recommended**)
+  - Controls the trade-off between answer generation and attention highlighting
+  - Higher values (1.0) make the model focus on pointing to supporting facts
+  - Lower values (0.2) prioritize answer generation with highlighting as a gentle guide
 - `freeze_t5_initially`: Whether to freeze T5 params initially
 - `use_gradient_checkpointing`: Enable gradient checkpointing (default: True)
 

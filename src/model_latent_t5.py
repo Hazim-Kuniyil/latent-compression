@@ -193,14 +193,15 @@ class LatentSelector(nn.Module):
 @dataclass
 class LatentT5Config:
     t5_model_name: str = "google/flan-t5-base"
-    encoder_model_name: str = "distilbert-base-uncased"
+    # CHANGE: Default to Longformer for long context support
+    encoder_model_name: str = "allenai/longformer-base-4096"
 
-    num_latents: int = 32
+    num_latents: int = 64  # Increased from 32
     num_latent_layers: int = 2
     num_latent_heads: int = 8
     latent_dropout: float = 0.1
 
-    aux_loss_weight: float = 0.1  # weight for support-attention loss
+    aux_loss_weight: float = 0.5  # weight for support-attention loss
 
     # NEW: training / memory options
     freeze_t5_initially: bool = False
@@ -261,8 +262,11 @@ class LatentT5Model(nn.Module):
         )
 
         # Flamingo-style gate (scalar)
-        # Initialized to 0.0 so tanh(gate) ~ 0 at start -> model starts near vanilla T5
-        self.latent_gate = nn.Parameter(torch.tensor(0.0))
+        # Initialize to 0.5 → tanh(0.5) ≈ 0.46
+        # This allows ~46% of latent signal through immediately,
+        # forcing T5 to use the latent context from the start
+        # while avoiding the instability of a fully-open gate.
+        self.latent_gate = nn.Parameter(torch.tensor(0.5))
 
         # Loss weight for support-fact supervision
         self.aux_loss_weight = config.aux_loss_weight
@@ -378,10 +382,11 @@ class LatentT5Model(nn.Module):
 
             # Mass of attention on support tokens
             pos_mass = (attn_over_tokens * support_mask).sum(dim=-1)  # [B]
-            # Avoid log(0) and cap maximum loss to prevent instability at initialization
-            # When pos_mass is very small (random attention), clamp to reasonable range
-            pos_mass = torch.clamp(pos_mass, min=0.01, max=1.0)  # changed from 1e-8
-            aux_loss = -torch.log(pos_mass).mean()
+
+            # CRITICAL FIX: Add epsilon (1e-6) inside log to prevent explosion
+            # This guarantees loss never exceeds ~13.8, and usually stays lower.
+            # No clamping needed - the epsilon handles numerical stability gracefully.
+            aux_loss = -torch.log(pos_mass + 1e-6).mean()
 
         # 8) Combine losses
         loss = None

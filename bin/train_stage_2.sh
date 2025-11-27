@@ -1,0 +1,17 @@
+python src/train_latent_t5.py \
+    --resume_from outputs_stage1/best_latent_t5.pt \
+    --num_epochs 10 \
+    --batch_size 8 \
+    --grad_accum_steps 8 \
+    --output_dir outputs_stage2 \
+    --lr_latent 1e-4 \
+    --lr_gate 1e-4 \
+    --lr_t5 3e-5 \
+    --lr_encoder 1e-5 \
+    --aux_loss_weight 0.5 \
+    --warmup_ratio 0.1 \
+    --max_context_tokens 2048 \
+    --max_question_tokens 64 \
+    --max_answer_tokens 32 \
+    --no_mixed_precision \
+    --no_gradient_checkpointing

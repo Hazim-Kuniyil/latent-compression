@@ -93,12 +93,13 @@ def _exact_match(pred: str, truth: str) -> float:
 #   Training / eval loops
 # =========================
 
-def _build_optimizer(model: LatentT5Model, lr_latent=1e-4, lr_t5=1e-5, lr_encoder=1e-5):
-    """Separate learning rates for latent modules, T5, and context encoder."""
+def _build_optimizer(model: LatentT5Model, lr_latent=1e-4, lr_t5=1e-5, lr_encoder=1e-5, lr_gate=5e-4):
+    """Separate learning rates for latent modules, gate, T5, and context encoder."""
     def _trainable(params):
         return [p for p in params if p.requires_grad]
 
-    latent_params = list(model.latent_selector.parameters()) + [model.latent_gate]
+    latent_params = list(model.latent_selector.parameters())
+    gate_params = [model.latent_gate]
     t5_params = list(model.t5.parameters())
     encoder_params = list(model.context_encoder.parameters())
 
@@ -107,6 +108,10 @@ def _build_optimizer(model: LatentT5Model, lr_latent=1e-4, lr_t5=1e-5, lr_encode
             {
                 "params": _trainable(latent_params),
                 "lr": lr_latent,
+            },
+            {
+                "params": _trainable(gate_params),
+                "lr": lr_gate,
             },
             {
                 "params": _trainable(t5_params),
@@ -137,6 +142,8 @@ def train_one_epoch(
     model.train()
     global_step = 0
     running_loss = 0.0
+    running_answer_loss = 0.0
+    running_aux_loss = 0.0
 
     for step, batch in enumerate(dataloader):
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
@@ -152,12 +159,14 @@ def train_one_epoch(
                 support_token_mask=batch["support_token_mask"],
             )
             loss = outputs["loss"]
+            answer_loss = outputs["answer_loss"]
+            aux_loss = outputs["aux_loss"]
 
         # --- NaN/Inf guard ---
         if not torch.isfinite(loss):
             print(
                 f"[Epoch {epoch_idx}] Non-finite loss detected: "
-                f"loss={loss}, answer_loss={outputs['answer_loss']}, aux_loss={outputs['aux_loss']}"
+                f"loss={loss}, answer_loss={answer_loss}, aux_loss={aux_loss}"
             )
             optimizer.zero_grad(set_to_none=True)
             continue
@@ -171,6 +180,8 @@ def train_one_epoch(
             loss.backward()
 
         running_loss += loss.item()
+        running_answer_loss += answer_loss.item()
+        running_aux_loss += aux_loss.item()
 
         if (step + 1) % grad_accum_steps == 0:
             if use_mixed_precision:
@@ -187,12 +198,22 @@ def train_one_epoch(
             global_step += 1
 
             if global_step % log_every == 0:
+                # running_loss adds the *scaled* loss (divided by grad_accum_steps),
+                # so dividing by log_every gives the average per global step.
                 avg_loss = running_loss / log_every
+
+                # running_answer_loss and running_aux_loss add UNSCALED losses
+                # for every micro-step, so divide by total micro-steps.
+                avg_answer_loss = running_answer_loss / (log_every * grad_accum_steps)
+                avg_aux_loss = running_aux_loss / (log_every * grad_accum_steps)
+
                 print(
                     f"[Epoch {epoch_idx} | Step {global_step}] "
-                    f"loss = {avg_loss:.4f}"
+                    f"Total: {avg_loss:.4f} | Ans: {avg_answer_loss:.4f} | Aux: {avg_aux_loss:.4f}"
                 )
                 running_loss = 0.0
+                running_answer_loss = 0.0
+                running_aux_loss = 0.0
 
 
 @torch.no_grad()
@@ -291,6 +312,7 @@ def parse_args():
     parser.add_argument("--warmup_ratio", type=float, default=0.1)
 
     parser.add_argument("--lr_latent", type=float, default=1e-4)
+    parser.add_argument("--lr_gate", type=float, default=5e-4)
     parser.add_argument("--lr_t5", type=float, default=1e-5)
     parser.add_argument("--lr_encoder", type=float, default=1e-5)
 
@@ -305,6 +327,8 @@ def parse_args():
 
     parser.add_argument("--resume_from", type=str, default=None,
                         help="Path to checkpoint file to resume training from.")
+    parser.add_argument("--aux_loss_weight", type=float, default=1.0,
+                        help="Weight for the auxiliary support-fact loss.")
 
     return parser.parse_args()
 
@@ -332,7 +356,8 @@ def main():
     # ---- Tokenizers ----
     print("Loading tokenizers...")
     t5_tokenizer = T5TokenizerFast.from_pretrained("google/flan-t5-base")
-    encoder_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+    # CHANGE: Load Longformer tokenizer for long context support
+    encoder_tokenizer = AutoTokenizer.from_pretrained("allenai/longformer-base-4096")
 
     # ---- Dataloaders ----
     print("Building dataloaders...")
@@ -374,17 +399,20 @@ def main():
         # Override mixed precision and gradient checkpointing from CLI args if provided
         config.use_gradient_checkpointing = not args.no_gradient_checkpointing
         config.use_mixed_precision = not args.no_mixed_precision
+        # Override freeze_t5_initially to enable two-stage training
+        config.freeze_t5_initially = args.freeze_t5_initially
 
         print(f"Loaded config from checkpoint: {config}")
     else:
         config = LatentT5Config(
             t5_model_name="google/flan-t5-base",
-            encoder_model_name="distilbert-base-uncased",
-            num_latents=32,
+            # CHANGE: Use Longformer for long context support
+            encoder_model_name="allenai/longformer-base-4096",
+            num_latents=64,
             num_latent_layers=2,
             num_latent_heads=8,
             latent_dropout=0.1,
-            aux_loss_weight=0.1,  # reduced from 1.0 to prevent early training instability
+            aux_loss_weight=args.aux_loss_weight,
             freeze_t5_initially=args.freeze_t5_initially,
             use_gradient_checkpointing=not args.no_gradient_checkpointing,
             use_mixed_precision=not args.no_mixed_precision,
@@ -403,6 +431,7 @@ def main():
     optimizer = _build_optimizer(
         model,
         lr_latent=args.lr_latent,
+        lr_gate=args.lr_gate,
         lr_t5=args.lr_t5,
         lr_encoder=args.lr_encoder,
     )

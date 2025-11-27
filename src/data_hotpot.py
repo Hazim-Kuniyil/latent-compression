@@ -148,47 +148,60 @@ def _build_support_set(supporting_facts: Dict[str, Any]) -> set:
 def _encode_context_for_latent(
     context: Dict[str, Any],
     supporting_facts: Dict[str, Any],
+    question: str,
     encoder_tokenizer: PreTrainedTokenizerBase,
     max_context_tokens: int,
 ) -> Tuple[List[int], List[int]]:
     """
     Build:
         - context_input_ids: list[int]
-        - support_token_mask: list[int] (0/1, aligned with context_input_ids)
+        - support_token_mask: list[int] (0/1)
 
-    Strategy:
-        - Iterate over paragraphs and sentences.
-        - For each sentence, create text = "{title}: {sentence}".
-        - Tokenize with add_special_tokens=False.
-        - If this (title, sent_idx) is in supporting_facts, mark all its tokens as support (1).
-        - Concatenate tokens for all sentences.
-        - Truncate to max_context_tokens.
-
-    NOTE:
-      We do NOT add [CLS]/[SEP] here; the context encoder will still work
-      without them, and this keeps the support mask aligned exactly.
+    CRITICAL CHANGE: Prepends Question to Context so latents are query-aware.
     """
     titles: List[str] = context["title"]
     sentences_per_title: List[List[str]] = context["sentences"]
-
     support_pairs = _build_support_set(supporting_facts)
 
-    all_token_ids: List[int] = []
-    support_mask: List[int] = []
+    # 1. Encode Question First (Query-Awareness)
+    # We limit question to 64 tokens to save room for context
+    q_token_ids = encoder_tokenizer.encode(
+        question,
+        add_special_tokens=False,
+        truncation=True,
+        max_length=64
+    )
 
+    # Initialize lists with the question
+    all_token_ids: List[int] = list(q_token_ids)
+    # Question is not a "supporting fact", so mask = 0
+    support_mask: List[int] = [0] * len(q_token_ids)
+
+    # 2. Add Special Separator if available (e.g. [SEP]) to help model distinguish
+    sep_token_id = encoder_tokenizer.sep_token_id
+    if sep_token_id is not None:
+        all_token_ids.append(sep_token_id)
+        support_mask.append(0)
+
+    # 3. Iterate over paragraphs
     for para_idx, title in enumerate(titles):
         sentences = sentences_per_title[para_idx]
         for sent_idx, sent_text in enumerate(sentences):
+            # Format: "Title: Sentence"
             text = f"{title}: {sent_text}"
 
             token_ids = encoder_tokenizer.encode(
                 text,
                 add_special_tokens=False,
-                truncation=False,  # we'll truncate at the end globally
+                truncation=False
             )
 
             if not token_ids:
                 continue
+
+            # Hard Stop Check: Will this sentence push us over the limit?
+            if len(all_token_ids) + len(token_ids) > max_context_tokens:
+                break
 
             is_support = (title, sent_idx) in support_pairs
             label_val = 1 if is_support else 0
@@ -196,23 +209,18 @@ def _encode_context_for_latent(
             all_token_ids.extend(token_ids)
             support_mask.extend([label_val] * len(token_ids))
 
-            # Early stop if we exceed max_context_tokens
-            if len(all_token_ids) >= max_context_tokens:
-                break
+        # Outer loop break check
         if len(all_token_ids) >= max_context_tokens:
             break
 
-    # Truncate
+    # 4. Final Safety Clamp (just in case)
     if len(all_token_ids) > max_context_tokens:
         all_token_ids = all_token_ids[:max_context_tokens]
         support_mask = support_mask[:max_context_tokens]
 
-    # Fallback if context is empty
+    # 5. Handle empty case
     if len(all_token_ids) == 0:
-        pad_id = encoder_tokenizer.pad_token_id
-        if pad_id is None:
-            # Many BERT-style models use 0 as pad, but use tokenizer's id if available
-            pad_id = 0
+        pad_id = encoder_tokenizer.pad_token_id or 0
         all_token_ids = [pad_id]
         support_mask = [0]
 
@@ -294,12 +302,11 @@ def collate_latent(
     labels[labels == t5_tokenizer.pad_token_id] = -100
 
     # 4) Context encoder: per-example tokenization + support mask
-
     # IMPORTANT: never exceed the encoder's max position embeddings
-    encoder_max_len = getattr(encoder_tokenizer, "model_max_length", max_context_tokens)
-    # DistilBERT has 512; some tokenizers set this to a very large sentinel, so clamp anyway
-    if encoder_max_len is None or encoder_max_len > 4096:
-        encoder_max_len = max_context_tokens
+    encoder_max_len = getattr(encoder_tokenizer, "model_max_length", 512)
+    # Longformer has 4096; DistilBERT has 512; some tokenizers set this to a very large sentinel, so clamp anyway
+    if encoder_max_len is None or encoder_max_len > 10000:
+        encoder_max_len = 512  # Safe default
 
     effective_max_ctx = min(max_context_tokens, encoder_max_len)
 
@@ -309,10 +316,12 @@ def collate_latent(
     for ex in batch:
         context = ex["context"]
         supporting_facts = ex["supporting_facts"]
+        question_text = ex["question"]
 
         ctx_ids, sup_mask = _encode_context_for_latent(
             context=context,
             supporting_facts=supporting_facts,
+            question=question_text,
             encoder_tokenizer=encoder_tokenizer,
             max_context_tokens=effective_max_ctx,  # <-- use clamped value
         )

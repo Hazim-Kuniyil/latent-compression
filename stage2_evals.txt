@@ -1,0 +1,134 @@
+root@4ef8956de4d5:~/latent-compression# python src/run_eval.py \
+    --checkpoint outputs_stage2/best_latent_t5.pt \
+    --split validation \
+    --batch_size 16 \
+    --ablation none
+Using device: cuda
+
+Loading checkpoint: outputs_stage2/best_latent_t5.pt
+Loaded config from checkpoint
+
+Initializing model...
+
+Running with learned latents (no ablation)
+
+Loading tokenizers...
+
+Loading HotpotQA (validation split)...
+
+============================================================
+Starting evaluation on 7405 examples
+============================================================
+
+Evaluating:   0%|                                                   | 0/463 [00:00<?, ?it/s]/usr/local/lib/python3.12/dist-packages/transformers/tokenization_utils_base.py:4169: UserWarning: `as_target_tokenizer` is deprecated and will be removed in v5 of Transformers. You can tokenize your labels by using the argument `text_target` of the regular `__call__` method (either in the same call as your input texts if you use the same keyword arguments, or in a separate call.
+  warnings.warn(
+Evaluating:   0%|                                           | 1/463 [00:00<06:29,  1.19it/s]Input ids are automatically padded to be a multiple of `config.attention_window`: 512       
+                                                                                            
+============================================================
+Evaluation Results (ablation=none)
+============================================================
+Exact Match: 11.71%
+F1 Score:    18.46%
+Num Examples: 7405
+============================================================
+
+root@4ef8956de4d5:~/latent-compression# python src/run_eval.py \
+    --checkpoint outputs_stage2/best_latent_t5.pt \
+    --split validation \
+    --batch_size 16 \
+    --ablation zeros
+Using device: cuda
+
+Loading checkpoint: outputs_stage2/best_latent_t5.pt
+Loaded config from checkpoint
+
+Initializing model...
+
+=' Applying ablation mode: zeros
+
+Loading tokenizers...
+
+Loading HotpotQA (validation split)...
+
+============================================================
+Starting evaluation on 7405 examples
+============================================================
+
+Evaluating:   0%|                                                   | 0/463 [00:00<?, ?it/s]/usr/local/lib/python3.12/dist-packages/transformers/tokenization_utils_base.py:4169: UserWarning: `as_target_tokenizer` is deprecated and will be removed in v5 of Transformers. You can tokenize your labels by using the argument `text_target` of the regular `__call__` method (either in the same call as your input texts if you use the same keyword arguments, or in a separate call.
+  warnings.warn(
+Evaluating:   0%|                                           | 1/463 [00:00<07:18,  1.05it/s]Input ids are automatically padded to be a multiple of `config.attention_window`: 512       
+
+============================================================
+Evaluation Results (ablation=zeros)
+============================================================
+Exact Match: 10.99%
+F1 Score:    16.82%
+Num Examples: 7405
+============================================================
+
+root@4ef8956de4d5:~/latent-compression# python src/run_eval.py \
+    --checkpoint outputs_stage2/best_latent_t5.pt \
+    --split validation \
+    --batch_size 16 \
+    --ablation random
+Using device: cuda
+
+Loading checkpoint: outputs_stage2/best_latent_t5.pt
+Loaded config from checkpoint
+
+Initializing model...
+
+=' Applying ablation mode: random
+
+Loading tokenizers...
+
+Loading HotpotQA (validation split)...
+
+============================================================
+Starting evaluation on 7405 examples
+============================================================
+
+Evaluating:   0%|                                                   | 0/463 [00:00<?, ?it/s]/usr/local/lib/python3.12/dist-packages/transformers/tokenization_utils_base.py:4169: UserWarning: `as_target_tokenizer` is deprecated and will be removed in v5 of Transformers. You can tokenize your labels by using the argument `text_target` of the regular `__call__` method (either in the same call as your input texts if you use the same keyword arguments, or in a separate call.
+  warnings.warn(
+Evaluating:   0%|                                           | 1/463 [00:00<06:32,  1.18it/s]Input ids are automatically padded to be a multiple of `config.attention_window`: 512       
+
+============================================================
+Evaluation Results (ablation=random)
+============================================================
+Exact Match: 10.97%
+F1 Score:    16.85%
+Num Examples: 7405
+============================================================
+
+root@4ef8956de4d5:~/latent-compression# python src/run_eval.py \
+    --checkpoint outputs_stage2/best_latent_t5.pt \
+    --split validation \
+    --batch_size 16 \
+    --ablation bypass
+Using device: cuda
+
+Loading checkpoint: outputs_stage2/best_latent_t5.pt
+Loaded config from checkpoint
+
+Initializing model...
+
+=' Applying ablation mode: bypass
+
+Loading tokenizers...
+
+Loading HotpotQA (validation split)...
+
+============================================================
+Starting evaluation on 7405 examples
+============================================================
+
+Evaluating:   0%|                                                   | 0/463 [00:00<?, ?it/s]/usr/local/lib/python3.12/dist-packages/transformers/tokenization_utils_base.py:4169: UserWarning: `as_target_tokenizer` is deprecated and will be removed in v5 of Transformers. You can tokenize your labels by using the argument `text_target` of the regular `__call__` method (either in the same call as your input texts if you use the same keyword arguments, or in a separate call.
+  warnings.warn(
+
+============================================================
+Evaluation Results (ablation=bypass)
+============================================================
+Exact Match: 11.69%
+F1 Score:    18.64%
+Num Examples: 7405
+============================================================
