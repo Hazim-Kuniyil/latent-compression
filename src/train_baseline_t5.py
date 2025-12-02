@@ -1,17 +1,3 @@
-# train_baseline_t5.py
-"""
-Train + eval script for BaselineT5Model on Hotpot-style data.
-
-Expected input files: JSONL with columns:
-    - id: str
-    - question: str
-    - answer: str
-    - supporting_facts: dict (ignored here)
-    - context: dict
-
-We just flatten the context and feed "question + context" into T5.
-"""
-
 import argparse
 import json
 import math
@@ -37,12 +23,7 @@ from model_baseline_t5 import BaselineT5Model
 from data_hotpot import HotpotDataset, collate_baseline
 
 
-# =========================
-#   Reproducibility
-# =========================
-
 def set_seed(seed: int = 42):
-    """Set random seeds for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -50,53 +31,7 @@ def set_seed(seed: int = 42):
         torch.cuda.manual_seed_all(seed)
 
 
-# =========================
-#   Data loading utilities
-# =========================
-
-def load_hotpot_df(path: str) -> pd.DataFrame:
-    """
-    Robust loader for Hotpot-style data.
-
-    Supports:
-      - .jsonl / .json  : line-delimited JSON (one example per line)
-      - .csv            : CSV with the same columns
-      - .pkl / .pickle  : pickled DataFrame
-
-    If your file is in another format, change this function accordingly.
-    """
-    ext = os.path.splitext(path)[1].lower()
-
-    if ext in [".jsonl", ".json"]:
-        # Safer manual JSONL parse (avoids pandas treating the path as literal JSON)
-        records = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                records.append(json.loads(line))
-        return pd.DataFrame.from_records(records)
-
-    if ext == ".csv":
-        return pd.read_csv(path)
-
-    if ext in [".pkl", ".pickle"]:
-        return pd.read_pickle(path)
-
-    raise ValueError(
-        f"Unsupported file extension '{ext}' for path={path}. "
-        "Please use .jsonl, .json, .csv, or .pkl/.pickle, "
-        "or extend load_hotpot_df() to handle your format."
-    )
-
-
-# =========================
-#   Text metrics utilities
-# =========================
-
 def _normalize_answer(s: str) -> str:
-    """Lowercase, strip, remove punctuation, articles, and extra whitespace."""
     def remove_articles(text):
         return re.sub(r"\b(a|an|the)\b", " ", text)
 
@@ -129,10 +64,6 @@ def _f1_score(pred: str, truth: str) -> float:
 def _exact_match(pred: str, truth: str) -> float:
     return float(_normalize_answer(pred) == _normalize_answer(truth))
 
-
-# =========================
-#   Training / eval loops
-# =========================
 
 def train_one_epoch(
     model: BaselineT5Model,
@@ -262,17 +193,9 @@ def evaluate(
     return mean_loss, em, f1
 
 
-# =========================
-#   Main / CLI
-# =========================
-
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--train_file", type=str, required=False,
-                        help="(Deprecated) Path to train data file. Now downloads from HuggingFace.")
-    parser.add_argument("--eval_file", type=str, required=False,
-                        help="(Deprecated) Path to eval/validation data file. Now downloads from HuggingFace.")
     parser.add_argument("--output_dir", type=str, default="outputs_baseline",
                         help="Directory to save best model checkpoint.")
 
@@ -298,10 +221,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Set random seed for reproducibility
     set_seed(42)
 
-    # ---- Load data from Hugging Face ----
     print("Loading HotpotQA from Hugging Face datasets...")
     hf_ds = load_dataset("hotpot_qa", "distractor")
     df_train = hf_ds["train"].to_pandas()
@@ -311,11 +232,9 @@ def main():
     train_dataset = HotpotDataset(df_train)
     eval_dataset = HotpotDataset(df_eval)
 
-    # ---- Tokenizer ----
     print("Loading tokenizer...")
     t5_tokenizer = T5TokenizerFast.from_pretrained("google/flan-t5-base")
 
-    # ---- Dataloaders ----
     print("Building dataloaders...")
     collate_fn = lambda batch: collate_baseline(
         batch,
@@ -338,12 +257,10 @@ def main():
         collate_fn=collate_fn,
     )
 
-    # ---- Model ----
     print("Initializing model...")
     model = BaselineT5Model(t5_model_name="google/flan-t5-base")
     model.to(device)
 
-    # ---- Optimizer & scheduler ----
     optimizer = AdamW(model.parameters(), lr=args.lr)
 
     num_training_steps = args.num_epochs * math.ceil(
@@ -357,13 +274,11 @@ def main():
         num_training_steps=num_training_steps,
     )
 
-    # ---- Mixed precision ----
     use_mixed_precision = (not args.no_mixed_precision) and device.type == "cuda"
     scaler = GradScaler(enabled=use_mixed_precision)
     if use_mixed_precision:
         print("Using mixed precision (AMP).")
 
-    # ---- Train loop ----
     best_eval_loss = None
     best_ckpt_path = os.path.join(args.output_dir, "best_baseline_t5.pt")
 
@@ -400,7 +315,6 @@ def main():
                 best_ckpt_path,
             )
 
-            # Save metrics alongside checkpoint
             metrics_path = os.path.join(args.output_dir, "best_metrics.json")
             with open(metrics_path, "w") as f:
                 json.dump(

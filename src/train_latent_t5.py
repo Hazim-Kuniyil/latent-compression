@@ -1,17 +1,3 @@
-# train_latent_t5.py
-"""
-Train + eval script for the LatentT5Model on Hotpot-style data.
-
-Expected input files: JSONL with columns:
-    - id: str
-    - question: str
-    - answer: str
-    - supporting_facts: dict {'title': [...], 'sent_id': [...]}
-    - context: dict {'title': [...], 'sentences': [[...], ...]}
-
-Adjust the pandas loading logic if your files are in a different format.
-"""
-
 import argparse
 import json
 import math
@@ -37,12 +23,7 @@ from model_latent_t5 import LatentT5Model, LatentT5Config
 from data_hotpot import HotpotDataset, collate_latent
 
 
-# =========================
-#   Reproducibility
-# =========================
-
 def set_seed(seed: int = 42):
-    """Set random seeds for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -50,12 +31,7 @@ def set_seed(seed: int = 42):
         torch.cuda.manual_seed_all(seed)
 
 
-# =========================
-#   Text metrics utilities
-# =========================
-
 def _normalize_answer(s: str) -> str:
-    """Lowercase, strip, remove punctuation, articles, and extra whitespace."""
     def remove_articles(text):
         return re.sub(r"\b(a|an|the)\b", " ", text)
 
@@ -89,12 +65,7 @@ def _exact_match(pred: str, truth: str) -> float:
     return float(_normalize_answer(pred) == _normalize_answer(truth))
 
 
-# =========================
-#   Training / eval loops
-# =========================
-
 def _build_optimizer(model: LatentT5Model, lr_latent=1e-4, lr_t5=1e-5, lr_encoder=1e-5, lr_gate=5e-4):
-    """Separate learning rates for latent modules, gate, T5, and context encoder."""
     def _trainable(params):
         return [p for p in params if p.requires_grad]
 
@@ -162,7 +133,6 @@ def train_one_epoch(
             answer_loss = outputs["answer_loss"]
             aux_loss = outputs["aux_loss"]
 
-        # --- NaN/Inf guard ---
         if not torch.isfinite(loss):
             print(
                 f"[Epoch {epoch_idx}] Non-finite loss detected: "
@@ -170,7 +140,6 @@ def train_one_epoch(
             )
             optimizer.zero_grad(set_to_none=True)
             continue
-        # ---------------------
 
         loss = loss / grad_accum_steps
 
@@ -198,12 +167,7 @@ def train_one_epoch(
             global_step += 1
 
             if global_step % log_every == 0:
-                # running_loss adds the *scaled* loss (divided by grad_accum_steps),
-                # so dividing by log_every gives the average per global step.
                 avg_loss = running_loss / log_every
-
-                # running_answer_loss and running_aux_loss add UNSCALED losses
-                # for every micro-step, so divide by total micro-steps.
                 avg_answer_loss = running_answer_loss / (log_every * grad_accum_steps)
                 avg_aux_loss = running_aux_loss / (log_every * grad_accum_steps)
 
@@ -225,10 +189,6 @@ def evaluate(
     compute_metrics: bool = True,
     max_gen_len: int = 32,
 ) -> Tuple[float, Optional[float], Optional[float]]:
-    """
-    Returns:
-        mean_loss, EM, F1
-    """
     model.eval()
     total_loss = 0.0
     num_batches = 0
@@ -292,17 +252,9 @@ def evaluate(
     return mean_loss, em, f1
 
 
-# =========================
-#   Main / CLI
-# =========================
-
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--train_file", type=str, required=False,
-                        help="(Deprecated) Path to train JSONL file. Now downloads from HuggingFace.")
-    parser.add_argument("--eval_file", type=str, required=False,
-                        help="(Deprecated) Path to eval/validation JSONL file. Now downloads from HuggingFace.")
     parser.add_argument("--output_dir", type=str, default="outputs_latent",
                         help="Directory to save best model checkpoint.")
 
@@ -340,10 +292,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Set random seed for reproducibility
     set_seed(42)
 
-    # ---- Load data from Hugging Face ----
     print("Loading HotpotQA from Hugging Face datasets...")
     hf_ds = load_dataset("hotpot_qa", "distractor")
     df_train = hf_ds["train"].to_pandas()
@@ -353,13 +303,10 @@ def main():
     train_dataset = HotpotDataset(df_train)
     eval_dataset = HotpotDataset(df_eval)
 
-    # ---- Tokenizers ----
     print("Loading tokenizers...")
     t5_tokenizer = T5TokenizerFast.from_pretrained("google/flan-t5-base")
-    # CHANGE: Load Longformer tokenizer for long context support
     encoder_tokenizer = AutoTokenizer.from_pretrained("allenai/longformer-base-4096")
 
-    # ---- Dataloaders ----
     print("Building dataloaders...")
     collate_fn = lambda batch: collate_latent(
         batch,
@@ -384,29 +331,23 @@ def main():
         collate_fn=collate_fn,
     )
 
-    # ---- Model config & init ----
     print("Initializing model...")
 
-    # If resuming from checkpoint, load config from checkpoint
     if args.resume_from:
         print(f"Loading checkpoint from {args.resume_from}...")
         checkpoint = torch.load(args.resume_from, map_location=device)
 
-        # Load config from checkpoint
         saved_config = checkpoint["config"]
         config = LatentT5Config(**saved_config)
 
-        # Override mixed precision and gradient checkpointing from CLI args if provided
         config.use_gradient_checkpointing = not args.no_gradient_checkpointing
         config.use_mixed_precision = not args.no_mixed_precision
-        # Override freeze_t5_initially to enable two-stage training
         config.freeze_t5_initially = args.freeze_t5_initially
 
         print(f"Loaded config from checkpoint: {config}")
     else:
         config = LatentT5Config(
             t5_model_name="google/flan-t5-base",
-            # CHANGE: Use Longformer for long context support
             encoder_model_name="allenai/longformer-base-4096",
             num_latents=64,
             num_latent_layers=2,
@@ -420,14 +361,12 @@ def main():
 
     model = LatentT5Model(config)
 
-    # Load model weights if resuming
     if args.resume_from:
         model.load_state_dict(checkpoint["model_state_dict"])
         print("Loaded model weights from checkpoint.")
 
     model.to(device)
 
-    # ---- Optimizer & scheduler ----
     optimizer = _build_optimizer(
         model,
         lr_latent=args.lr_latent,
@@ -447,13 +386,11 @@ def main():
         num_training_steps=num_training_steps,
     )
 
-    # ---- Mixed precision ----
     use_mixed_precision = config.use_mixed_precision and device.type == "cuda"
     scaler = GradScaler(enabled=use_mixed_precision)
     if use_mixed_precision:
         print("Using mixed precision (AMP).")
 
-    # ---- Train loop ----
     best_eval_loss = None
     best_ckpt_path = os.path.join(args.output_dir, "best_latent_t5.pt")
 
@@ -491,7 +428,6 @@ def main():
                 best_ckpt_path,
             )
 
-            # Save metrics alongside checkpoint
             metrics_path = os.path.join(args.output_dir, "best_metrics.json")
             with open(metrics_path, "w") as f:
                 json.dump(
