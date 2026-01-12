@@ -1,0 +1,15 @@
+# Core deep learning
+torch>=2.0.0
+numpy>=1.24.0
+
+# Hugging Face ecosystem
+transformers>=4.30.0
+datasets>=2.14.0
+
+# Data handling
+pandas>=2.0.0
+
+# Progress bars
+tqdm>=4.65.0
+
+hf_transfer

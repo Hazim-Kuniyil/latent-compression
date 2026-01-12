@@ -1,0 +1,1 @@
+rsync -avz   -e "ssh -p 19714 -i ~/.ssh/id_ed25519"   --exclude='.venv/'   --exclude='.git/'   --exclude='*.pt'   --exclude='__pycache__/'   --exclude='*.pyc'   --exclude='outputs_*'   ./   root@74.2.96.22:~/latent-compression
